@@ -7,7 +7,7 @@ TODO:
 
 """
 
-# pylint: disable=redefined-outer-name, line-too-long, missing-function-docstring
+# pylint: disable=locally-disabled, redefined-outer-name, line-too-long, missing-function-docstring
 
 
 import json
@@ -147,7 +147,7 @@ def generate_time_report(time_entries: json):
             entries["task_totals"][entry["task"]] += entry["task_hours"]
             entries["total_hours"] += entry["task_hours"]
 
-    for day, entries in entries_by_day:
+    for day, entries in entries_by_day.items():
         print("----")
         print(f'{day.strftime("%A %b %d %Y")}')
         print(f'Total Time: {entries["total_hours"]:3.1f}')
