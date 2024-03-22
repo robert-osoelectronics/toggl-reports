@@ -1,17 +1,26 @@
 """
 TODO:
-- command line args
-- query API for workspace IDs and client IDs
 - allow getting number of days previous to date (vs. having to be previous to a given weekday)
+- combine API requests into a streamlined function?
+- handle failed requests (check http return code, timeout, etc.)
+- enable strict pylinting
 
 """
 
-import requests
+# pylint: disable=redefined-outer-name, line-too-long, missing-function-docstring
+
+
 import json
-from base64 import b64encode
 import calendar
-from datetime import date, timedelta, datetime
 import configparser
+import os
+import sys
+from argparse import ArgumentParser
+from base64 import b64encode
+from datetime import date, timedelta, datetime
+
+import requests
+
 
 def get_last_weeks_date_range(
     num_weeks: int,
@@ -30,7 +39,7 @@ def get_last_weeks_date_range(
     tuple of day strings, (starting day, ending day)
     """
     assert num_weeks >= 1
-    assert type(previous_to) is date
+    assert isinstance(previous_to, date)
     assert day_of_week < 7
     dow_offset = (7 - (day_of_week - previous_to.weekday())) % 7
     end_day = previous_to - timedelta(days=dow_offset)
@@ -38,7 +47,19 @@ def get_last_weeks_date_range(
     return (start_day.strftime("%Y-%m-%d"), end_day.strftime("%Y-%m-%d"))
 
 
-def query_toggl(
+def query_toggl_workspaces(api_token: str):
+
+    data = requests.get(
+        "https://api.track.toggl.com/api/v9/me",
+        headers={
+            "content-type": "application/json",
+            "Authorization": f'Basic {b64encode(bytes(api_token + ":api_token", encoding="utf-8")).decode("ascii"):s}',
+        },
+    )
+    return data.json()["default_workspace_id"]
+
+
+def query_toggl_time_entries(
     api_token: str,
     workspace_id: int,
     client_ids: list,
@@ -65,13 +86,28 @@ def query_toggl(
         json=query,
         headers={
             "content-type": "application/json",
-            "Authorization": "Basic %s" % b64encode(bytes(api_token+":api_token", encoding='utf-8')).decode("ascii"),
+            "Authorization": f'Basic {b64encode(bytes(api_token + ":api_token", encoding="utf-8")).decode("ascii"):s}',
         },
     )
-    # print(data.text)
-    # print(data.reason)
-    # TODO: handle invalid responses
     return data.json()
+
+
+def query_toggl_clients(
+    api_token: str,
+    workspace_id: int,
+):
+
+    data = requests.get(
+        f"https://api.track.toggl.com/api/v9/workspaces/{workspace_id}/clients",
+        headers={
+            "content-type": "application/json",
+            "Authorization": f'Basic {b64encode(bytes(api_token + ":api_token", encoding="utf-8")).decode("ascii"):s}',
+        },
+    )
+    clients = {}
+    for client in data.json():
+        clients[client["name"].lower()] = client["id"]
+    return clients
 
 
 def generate_time_report(time_entries: json):
@@ -90,61 +126,63 @@ def generate_time_report(time_entries: json):
         # and populate it with all time entries
         entries_by_day.setdefault(start_date, {"time_entries": []})
         entries_by_day[start_date]["time_entries"].append(
-                {
-                    "task": entry["description"],
-                    "task_hours": round(entry_detail["seconds"] / 3600, 1),
-                    "start_time": datetime.strptime(
-                        entry_detail["start"], "%Y-%m-%dT%H:%M:%S%z"
-                    ).time(),
-                    "stop_time": datetime.strptime(
-                        entry_detail["stop"], "%Y-%m-%dT%H:%M:%S%z"
-                    ).time(),
-                }
+            {
+                "task": entry["description"],
+                "task_hours": round(entry_detail["seconds"] / 3600, 1),
+                "start_time": datetime.strptime(
+                    entry_detail["start"], "%Y-%m-%dT%H:%M:%S%z"
+                ).time(),
+                "stop_time": datetime.strptime(
+                    entry_detail["stop"], "%Y-%m-%dT%H:%M:%S%z"
+                ).time(),
+            }
         )
 
     # Group entries by task and get total time per task and total per day
-    for day in entries_by_day:
-        entries_by_day[day]["task_totals"] = {}
-        entries_by_day[day]["total_hours"] = 0
-        for entry in entries_by_day[day]["time_entries"]:
-            entries_by_day[day]["task_totals"].setdefault(entry["task"], 0)
-            entries_by_day[day]["task_totals"][entry["task"]] += entry["task_hours"]
-            entries_by_day[day]["total_hours"] += entry["task_hours"]
+    for day, entries in entries_by_day.items():
+        entries["task_totals"] = {}
+        entries["total_hours"] = 0
+        for entry in entries["time_entries"]:
+            entries["task_totals"].setdefault(entry["task"], 0)
+            entries["task_totals"][entry["task"]] += entry["task_hours"]
+            entries["total_hours"] += entry["task_hours"]
 
-    for day in entries_by_day:
-        data = entries_by_day[day]
+    for day, entries in entries_by_day:
         print("----")
         print(f'{day.strftime("%A %b %d %Y")}')
-        print(f'Total Time: {data["total_hours"]:3.1f}')
-        print(f'Task Summary:')
-        for task in data["task_totals"]:
-            print(f'- {task}: {data["task_totals"][task]:3.1f}hrs')
-        print(f'\r\nTime Entries:')
-        for entry in data["time_entries"]:
-            print(f'{entry["task"]}, \
+        print(f'Total Time: {entries["total_hours"]:3.1f}')
+        print("Task Summary:")
+        for task in entries["task_totals"]:
+            print(f'- {task}: {entries["task_totals"][task]:3.1f}hrs')
+        print("\r\nTime Entries:")
+        for entry in entries["time_entries"]:
+            print(
+                f'{entry["task"]}, \
 {entry["start_time"].strftime("%H:%M")}->{entry["stop_time"].strftime("%H:%M")}, \
-{entry["task_hours"]:3.1f}hrs')
+{entry["task_hours"]:3.1f}hrs'
+            )
         print("\r\n\n")
+
 
 def enter_user_config():
     done = False
-    while(not done):
+    while not done:
         config = configparser.ConfigParser()
         config["SECRETS"] = {}
         secret_cfg = config["SECRETS"]
         print("\r\nEnter Toggl API Token:")
-        secret_cfg["api_token"] = input()
-        print("Enter workspace ID:")
-        secret_cfg["workspace_id"] = input()
-        print("Enter default client IDs separated by commas:")
-        ids =input().strip(' ').split(',') # unpack list to validate
-        ids = ",".join(ids) # pack back into a list
-        secret_cfg["client_ids"] = ids
-        print(f"Entered config:")
+        api_token = input()
+        secret_cfg["api_token"] = api_token
+        print("Querying workspace ID... ")
+        workspace_id = query_toggl_workspaces(api_token)
+        print(f"Got workspace ID: {workspace_id}")
+        secret_cfg["workspace_id"] = str(workspace_id)
+        print("Entered config:")
         print_config(config)
-        print("Enter Y to confirm, any other key to re-enter secrets:")
-        done = (input().lower() == "y")
+        print("Enter Y to save, any other key to re-enter secrets:")
+        done = input().lower() == "y"
     return config
+
 
 def print_config(config):
     config_str = ""
@@ -154,26 +192,64 @@ def print_config(config):
             config_str += f"{name} = {value}\n"
     print(config_str)
 
+
+def print_clients(clients):
+    for c in clients:
+        print(c)
+
+
 if __name__ == "__main__":
+    parser = ArgumentParser()
+    parser.add_argument(
+        "-c",
+        "--client",
+        help="Client name to filter on. Run with --list_clients to list options.",
+    )
+    parser.add_argument(
+        "-l", "--list_clients", help="List active clients", action="store_true"
+    )
+    args = parser.parse_args()
+
     config = configparser.ConfigParser()
-    try:
-        config.read("secrets.ini")
-    except FileNotFoundError:
+    CONFIG_PATH = "secrets.ini"
+    if os.path.exists(CONFIG_PATH):
+        config.read(CONFIG_PATH)
+    else:
         # No config file - prompt user for secrets
         print("No Config file found.")
         config = enter_user_config()
-        with open("secrets.ini", "w") as configfile:
+        with open(CONFIG_PATH, "w", encoding="utf-8") as configfile:
             config.write(configfile)
     secrets = config["SECRETS"]
 
     previous_to_day = date.today()
 
-    time_entries = query_toggl(
-        api_token=secrets["api_token"],
-        workspace_id=int(secrets["workspace_id"]),
-        client_ids=[int(i) for i in secrets["client_ids"].split(",")],
+    api_token = secrets["api_token"]
+    workspace_id = int(secrets["workspace_id"])
+    clients = query_toggl_clients(api_token, workspace_id)
+
+    if args.list_clients:
+        print_clients(clients)
+        sys.exit(0)
+
+    if args.client:
+        client_name = args.client.lower()
+        if client_name in clients:
+            print(f"Filtering on client: {args.client}")
+            client_ids = [clients[client_name]]
+        else:
+            print(f'Client "{args.client}" not found. Valid clients are:')
+            print_clients(clients)
+            sys.exit(1)
+    else:
+        client_ids = []  # blank returns all clients
+
+    time_entries = query_toggl_time_entries(
+        api_token=api_token,
+        workspace_id=workspace_id,
+        client_ids=client_ids,
         date_range=get_last_weeks_date_range(
             num_weeks=2, day_of_week=calendar.FRIDAY, previous_to=previous_to_day
-        )
+        ),
     )
     generate_time_report(time_entries)
