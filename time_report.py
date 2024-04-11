@@ -7,11 +7,10 @@ TODO:
 
 """
 
-# pylint: disable=locally-disabled, redefined-outer-name, line-too-long, missing-function-docstring
+# pylint: disable=locally-disabled, redefined-outer-name, line-too-long, missing-function-docstring, invalid-name
 
 
 import json
-import calendar
 import configparser
 import os
 import sys
@@ -22,29 +21,24 @@ from datetime import date, timedelta, datetime
 import requests
 
 
-def get_last_weeks_date_range(
-    num_weeks: int,
-    day_of_week: int,
-    previous_to: date,
+def get_previous_date_range(
+    num_days: int,
+    end_date: date,
 ):
     """
-    Get the dates for a range of weeks ending on a day of week, previous to a given date.
+    Get the dates for a range of days ending on a certain day.
 
     args:
-    num_weeks -- the number of weeks in the range
-    day_of_week -- the day the range should end on, e.g. calendar.FRIDAY
-    previous_to -- the day that the date range should be before
+    num_days -- the number of days in the range
+    end_date -- the last day in the range
 
     returns:
     tuple of day strings, (starting day, ending day)
     """
-    assert num_weeks >= 1
-    assert isinstance(previous_to, date)
-    assert day_of_week < 7
-    dow_offset = (7 - (day_of_week - previous_to.weekday())) % 7
-    end_day = previous_to - timedelta(days=dow_offset)
-    start_day = end_day - timedelta(days=7 * num_weeks)
-    return (start_day.strftime("%Y-%m-%d"), end_day.strftime("%Y-%m-%d"))
+    assert num_days >= 1
+    assert isinstance(end_date, date)
+    start_day = end_date - timedelta(days=num_days)
+    return (start_day.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
 
 
 def query_toggl_workspaces(api_token: str):
@@ -206,7 +200,14 @@ if __name__ == "__main__":
         help="Client name to filter on. Run with --list_clients to list options.",
     )
     parser.add_argument(
-        "-l", "--list_clients", help="List active clients", action="store_true"
+        "-l", "--list_clients", help="List active clients.", action="store_true"
+    )
+    parser.add_argument(
+        "-n",
+        "--numdays",
+        help="Number of days (including today) to include in report.",
+        type=int,
+        default=14,
     )
     args = parser.parse_args()
 
@@ -221,8 +222,6 @@ if __name__ == "__main__":
         with open(CONFIG_PATH, "w", encoding="utf-8") as configfile:
             config.write(configfile)
     secrets = config["SECRETS"]
-
-    previous_to_day = date.today()
 
     api_token = secrets["api_token"]
     workspace_id = int(secrets["workspace_id"])
@@ -248,8 +247,8 @@ if __name__ == "__main__":
         api_token=api_token,
         workspace_id=workspace_id,
         client_ids=client_ids,
-        date_range=get_last_weeks_date_range(
-            num_weeks=2, day_of_week=calendar.FRIDAY, previous_to=previous_to_day
+        date_range=get_previous_date_range(
+            num_days=args.numdays, end_date=date.today()
         ),
     )
     generate_time_report(time_entries)
