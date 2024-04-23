@@ -1,6 +1,10 @@
+#!/bin/python
 """
+Queries the Toggl Track API for activities from a preceding time period.
+Formats the output into a nice ASCII output broken down by day and task, for
+easy copying into a client's time reporting system.
+
 TODO:
-- allow getting number of days previous to date (vs. having to be previous to a given weekday)
 - combine API requests into a streamlined function?
 - handle failed requests (check http return code, timeout, etc.)
 - enable strict pylinting
@@ -42,7 +46,15 @@ def get_previous_date_range(
 
 
 def query_toggl_workspaces(api_token: str):
+    """
+    Get the default workspace ID from Toggl (needed for other API calls).
 
+    args:
+    api_token -- your API token
+
+    returns:
+    default workspace ID reported from Toggl
+    """
     data = requests.get(
         "https://api.track.toggl.com/api/v9/me",
         headers={
@@ -90,7 +102,16 @@ def query_toggl_clients(
     api_token: str,
     workspace_id: int,
 ):
+    """
+    Get a list of active clients from Toggl.
 
+    args:
+    api_token -- Toggl API Token
+    workspace_id -- your workspace ID (from query_toggl_workspaces())
+
+    returns:
+    a list of clients
+    """
     data = requests.get(
         f"https://api.track.toggl.com/api/v9/workspaces/{workspace_id}/clients",
         headers={
@@ -105,6 +126,13 @@ def query_toggl_clients(
 
 
 def generate_time_report(time_entries: json):
+    """
+    Prints an ASCII time report from the activities queried from Toggl.
+
+    args:
+    time_entries -- The json returned from the Toggl API call (query_toggl_time_entries())
+    """
+
     # Group entries by day
     entries_by_day = {}
     for entry in time_entries:
@@ -158,7 +186,10 @@ def generate_time_report(time_entries: json):
         print("\r\n\n")
 
 
-def enter_user_config():
+def _enter_user_config():
+    """
+    Has the user enter their API key, and gets workspace ID from Toggl API.
+    """
     done = False
     while not done:
         config = configparser.ConfigParser()
@@ -172,13 +203,19 @@ def enter_user_config():
         print(f"Got workspace ID: {workspace_id}")
         secret_cfg["workspace_id"] = str(workspace_id)
         print("Entered config:")
-        print_config(config)
+        _print_config(config)
         print("Enter Y to save, any other key to re-enter secrets:")
         done = input().lower() == "y"
     return config
 
 
-def print_config(config):
+def _print_config(config):
+    """
+    Prints a user config.
+
+    args:
+    config -- the user config to print
+    """
     config_str = ""
     for section in config.sections():
         config_str += f"[{section}]\n"
@@ -187,7 +224,7 @@ def print_config(config):
     print(config_str)
 
 
-def print_clients(clients):
+def _print_clients(clients):
     for c in clients:
         print(c)
 
@@ -218,7 +255,7 @@ if __name__ == "__main__":
     else:
         # No config file - prompt user for secrets
         print("No Config file found.")
-        config = enter_user_config()
+        config = _enter_user_config()
         with open(CONFIG_PATH, "w", encoding="utf-8") as configfile:
             config.write(configfile)
     secrets = config["SECRETS"]
@@ -228,7 +265,7 @@ if __name__ == "__main__":
     clients = query_toggl_clients(api_token, workspace_id)
 
     if args.list_clients:
-        print_clients(clients)
+        _print_clients(clients)
         sys.exit(0)
 
     if args.client:
@@ -238,7 +275,7 @@ if __name__ == "__main__":
             client_ids = [clients[client_name]]
         else:
             print(f'Client "{args.client}" not found. Valid clients are:')
-            print_clients(clients)
+            _print_clients(clients)
             sys.exit(1)
     else:
         client_ids = []  # blank returns all clients
